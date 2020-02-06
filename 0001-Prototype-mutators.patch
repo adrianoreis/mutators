@@ -1,0 +1,1537 @@
+From 88e9548cd2533890afa9023cea0d5d20747290a1 Mon Sep 17 00:00:00 2001
+From: Adriano Reis <reis.a@outlook.com>
+Date: Thu, 6 Feb 2020 22:31:52 +0100
+Subject: [PATCH] Prototype mutators
+
+---
+ .../engine/gregor/ClassContext.java           |  54 ++--
+ .../engine/gregor/GregorMutater.java          |   4 +-
+ .../engine/gregor/MethodMutationContext.java  |   5 +
+ .../engine/gregor/MutationContext.java        |   2 +
+ .../engine/gregor/config/Mutator.java         |  15 +
+ .../EmptyConsumerForOptionals.java            | 132 +++++++++
+ .../experimental/EmptyMethodAdapter.java      | 259 ++++++++++++++++++
+ .../experimental/IdentityFunctionMutator.java | 112 ++++++++
+ .../LimitStreamElementsMutator.java           |  66 +++++
+ .../experimental/NegatePredicateMutator.java  |  61 +++++
+ .../PredicateMatchingMutator.java             | 108 ++++++++
+ .../experimental/SkipOneElementMutator.java   |  68 +++++
+ .../EmptyConsumerForOptionalsTest.java        |  39 +++
+ .../IdentityFunctionMutatorTest.java          | 162 +++++++++++
+ .../LimitStreamElementsMutatorTest.java       |  39 +++
+ .../NegatePredicateMutatorTest.java           |  40 +++
+ .../PredicateMatchingMutatorTest.java         |  90 ++++++
+ .../SkipOneElementMutatorTest.java            |  41 +++
+ 18 files changed, 1272 insertions(+), 25 deletions(-)
+ create mode 100644 pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/EmptyConsumerForOptionals.java
+ create mode 100644 pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/EmptyMethodAdapter.java
+ create mode 100644 pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/IdentityFunctionMutator.java
+ create mode 100644 pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/LimitStreamElementsMutator.java
+ create mode 100644 pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/NegatePredicateMutator.java
+ create mode 100644 pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/PredicateMatchingMutator.java
+ create mode 100644 pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/SkipOneElementMutator.java
+ create mode 100644 pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/EmptyConsumerForOptionalsTest.java
+ create mode 100644 pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/IdentityFunctionMutatorTest.java
+ create mode 100644 pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/LimitStreamElementsMutatorTest.java
+ create mode 100644 pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/NegatePredicateMutatorTest.java
+ create mode 100644 pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/PredicateMatchingMutatorTest.java
+ create mode 100644 pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/SkipOneElementMutatorTest.java
+
+diff --git a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/ClassContext.java b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/ClassContext.java
+index f5af39cb..b2fc35bb 100644
+--- a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/ClassContext.java
++++ b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/ClassContext.java
+@@ -14,32 +14,44 @@
+  */
+ package org.pitest.mutationtest.engine.gregor;
+ 
+-import java.util.ArrayList;
+-import java.util.Collection;
+-import java.util.List;
+-import java.util.function.Predicate;
+-
+ import org.pitest.functional.FCollection;
+-import java.util.Optional;
+ import org.pitest.mutationtest.engine.MutationDetails;
+ import org.pitest.mutationtest.engine.MutationIdentifier;
+ import org.pitest.mutationtest.engine.gregor.blocks.BlockCounter;
+ import org.pitest.mutationtest.engine.gregor.blocks.ConcreteBlockCounter;
+ 
++import java.util.ArrayList;
++import java.util.Collection;
++import java.util.List;
++import java.util.Optional;
++import java.util.function.Predicate;
++
+ class ClassContext implements BlockCounter {
+ 
+-  private ClassInfo                   classInfo;
+-  private String                      sourceFile;
++  private final List<MutationDetails>        mutations = new ArrayList<>();
++  private final ConcreteBlockCounter blockCounter = new ConcreteBlockCounter();
++  private ClassInfo classInfo;
++  private String    sourceFile;
++  private       Optional<MutationIdentifier> target    = Optional.empty();
++  private       byte[]               byteSource;
+ 
+-  private Optional<MutationIdentifier>  target       = Optional.empty();
+-  private final List<MutationDetails> mutations    = new ArrayList<>();
++  private static Predicate<MutationDetails> hasId(final MutationIdentifier id) {
++    return a -> a.matchesId(id);
++  }
+ 
+-  private final ConcreteBlockCounter  blockCounter = new ConcreteBlockCounter();
++  private static Predicate<MutationIdentifier> idMatches(
++      final MutationIdentifier newId) {
++    return a -> a.matches(newId);
++  }
+ 
+   public Optional<MutationIdentifier> getTargetMutation() {
+     return this.target;
+   }
+ 
++  public void setTargetMutation(final Optional<MutationIdentifier> target) {
++    this.target = target;
++  }
++
+   public ClassInfo getClassInfo() {
+     return this.classInfo;
+   }
+@@ -52,18 +64,10 @@ class ClassContext implements BlockCounter {
+     return this.sourceFile;
+   }
+ 
+-  public void setTargetMutation(final Optional<MutationIdentifier> target) {
+-    this.target = target;
+-  }
+-
+   public List<MutationDetails> getMutationDetails(final MutationIdentifier id) {
+     return FCollection.filter(this.mutations, hasId(id));
+   }
+ 
+-  private static Predicate<MutationDetails> hasId(final MutationIdentifier id) {
+-    return a -> a.matchesId(id);
+-  }
+-
+   public void registerClass(final ClassInfo classInfo) {
+     this.classInfo = classInfo;
+   }
+@@ -76,11 +80,6 @@ class ClassContext implements BlockCounter {
+     return getTargetMutation().filter(idMatches(newId)).isPresent();
+   }
+ 
+-  private static Predicate<MutationIdentifier> idMatches(
+-      final MutationIdentifier newId) {
+-    return a -> a.matches(newId);
+-  }
+-
+   public Collection<MutationDetails> getCollectedMutations() {
+     return this.mutations;
+   }
+@@ -119,4 +118,11 @@ class ClassContext implements BlockCounter {
+     return this.blockCounter.isWithinFinallyBlock();
+   }
+ 
++  public byte[] getByteSource() {
++    return byteSource;
++  }
++
++  public void setByteSource(byte[] byteSource) {
++    this.byteSource = byteSource;
++  }
+ }
+diff --git a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/GregorMutater.java b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/GregorMutater.java
+index 0debd765..a9ce0618 100644
+--- a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/GregorMutater.java
++++ b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/GregorMutater.java
+@@ -64,7 +64,7 @@ public class GregorMutater implements Mutater {
+     context.setTargetMutation(Optional.<MutationIdentifier> empty());
+     Optional<byte[]> bytes = GregorMutater.this.byteSource.getBytes(
+         classToMutate.asInternalName());
+-    
++    bytes.ifPresent(context::setByteSource);
+     return bytes.map(findMutations(context))
+         .orElse(Collections.<MutationDetails>emptyList());
+ 
+@@ -97,6 +97,8 @@ public class GregorMutater implements Mutater {
+     final Optional<byte[]> bytes = this.byteSource.getBytes(id.getClassName()
+         .asJavaName());
+ 
++    bytes.ifPresent(context::setByteSource);
++
+     final ClassReader reader = new ClassReader(bytes.get());
+     final ClassWriter w = new ComputeClassWriter(this.byteSource,
+         this.computeCache, FrameOptions.pickFlags(bytes.get()));
+diff --git a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/MethodMutationContext.java b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/MethodMutationContext.java
+index 226edb5a..d5d16d99 100644
+--- a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/MethodMutationContext.java
++++ b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/MethodMutationContext.java
+@@ -99,6 +99,11 @@ class MethodMutationContext implements MutationContext, InstructionCounter {
+     this.mutationFindingDisabledReasons.remove(reason);
+   }
+ 
++  @Override
++  public byte[] getByteSource() {
++    return this.classContext.getByteSource();
++  }
++
+   @Override
+   public void increment() {
+     this.instructionIndex = this.instructionIndex + 1;
+diff --git a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/MutationContext.java b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/MutationContext.java
+index 4f7f2f15..42215205 100644
+--- a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/MutationContext.java
++++ b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/MutationContext.java
+@@ -18,4 +18,6 @@ public interface MutationContext extends BlockCounter {
+ 
+   void enableMutatations(String reason);
+ 
++  byte[] getByteSource();
++
+ }
+\ No newline at end of file
+diff --git a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/config/Mutator.java b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/config/Mutator.java
+index e77baf68..d8ad72f1 100644
+--- a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/config/Mutator.java
++++ b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/config/Mutator.java
+@@ -50,10 +50,16 @@ import org.pitest.mutationtest.engine.gregor.mutators.RemoveConditionalMutator.C
+ import org.pitest.mutationtest.engine.gregor.mutators.ReturnValsMutator;
+ import org.pitest.mutationtest.engine.gregor.mutators.VoidMethodCallMutator;
+ import org.pitest.mutationtest.engine.gregor.mutators.experimental.BigIntegerMutator;
++import org.pitest.mutationtest.engine.gregor.mutators.experimental.IdentityFunctionMutator;
+ import org.pitest.mutationtest.engine.gregor.mutators.experimental.NakedReceiverMutator;
++import org.pitest.mutationtest.engine.gregor.mutators.experimental.NegatePredicateMutator;
++import org.pitest.mutationtest.engine.gregor.mutators.experimental.PredicateMatchingMutator;
+ import org.pitest.mutationtest.engine.gregor.mutators.experimental.RemoveIncrementsMutator;
+ import org.pitest.mutationtest.engine.gregor.mutators.experimental.RemoveSwitchMutator;
+ import org.pitest.mutationtest.engine.gregor.mutators.experimental.SwitchMutator;
++import org.pitest.mutationtest.engine.gregor.mutators.experimental.EmptyConsumerForOptionals;
++import org.pitest.mutationtest.engine.gregor.mutators.experimental.LimitStreamElementsMutator;
++import org.pitest.mutationtest.engine.gregor.mutators.experimental.SkipOneElementMutator;
+ import org.pitest.mutationtest.engine.gregor.mutators.rv.ABSMutator;
+ import org.pitest.mutationtest.engine.gregor.mutators.rv.AOD1Mutator;
+ import org.pitest.mutationtest.engine.gregor.mutators.rv.AOD2Mutator;
+@@ -221,6 +227,15 @@ public final class Mutator {
+      * Experimental mutator that swaps big integer methods
+      */
+     add("EXPERIMENTAL_BIG_INTEGER", BigIntegerMutator.INSTANCE);
++
++    //TODO add doc
++    add("EXPERIMENTAL_SKIP_ELEMENT", SkipOneElementMutator.SKIP_ONE_ELEMENT_MUTATOR);
++    add("EXPERIMENTAL_LIMIT_ELEMENTS", LimitStreamElementsMutator.LIMIT_STREAM_ELEMENTS_MUTATOR);
++    add("EXPERIMENTAL_EMPTY_CONSUMER", EmptyConsumerForOptionals.EMPTY_CONSUMER_FOR_OPTIONALS_MUTATOR);
++    add("EXPERIMENTAL_TO_IDENTITY_FUNCTION", IdentityFunctionMutator.TO_IDENTITY_FUNCTION_MUTATOR);
++    add("EXPERIMENTAL_PREDICATE_MATCHING", PredicateMatchingMutator.STREAM_PREDICATE_MATCHING_MUTATOR);
++    add("EXPERIMENTAL_NEGATE_PREDICATE", NegatePredicateMutator.NEGATE_PREDICATE_MUTATOR);
++
+   }
+ 
+   /**
+diff --git a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/EmptyConsumerForOptionals.java b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/EmptyConsumerForOptionals.java
+new file mode 100644
+index 00000000..4b60e87b
+--- /dev/null
++++ b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/EmptyConsumerForOptionals.java
+@@ -0,0 +1,132 @@
++package org.pitest.mutationtest.engine.gregor.mutators.experimental;
++
++import org.objectweb.asm.ClassReader;
++import org.objectweb.asm.ClassVisitor;
++import org.objectweb.asm.Handle;
++import org.objectweb.asm.Label;
++import org.objectweb.asm.MethodVisitor;
++import org.objectweb.asm.Type;
++import org.pitest.bytecode.ASMVersion;
++import org.pitest.mutationtest.engine.MutationIdentifier;
++import org.pitest.mutationtest.engine.gregor.MethodInfo;
++import org.pitest.mutationtest.engine.gregor.MethodMutatorFactory;
++import org.pitest.mutationtest.engine.gregor.MutationContext;
++import org.pitest.util.Log;
++
++import java.lang.invoke.LambdaMetafactory;
++import java.util.Arrays;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Set;
++import java.util.function.Consumer;
++import java.util.function.DoubleConsumer;
++import java.util.logging.Logger;
++
++import static org.objectweb.asm.Opcodes.ASM7;
++import static org.objectweb.asm.Opcodes.RETURN;
++
++public enum EmptyConsumerForOptionals implements MethodMutatorFactory {
++
++  EMPTY_CONSUMER_FOR_OPTIONALS_MUTATOR;
++
++  @Override
++  public MethodVisitor create(final MutationContext context,
++      final MethodInfo methodInfo, final MethodVisitor methodVisitor) {
++    return new EmptyConsumerMethodVisitor(this, context, methodInfo,
++        methodVisitor);
++  }
++
++  @Override
++  public String getGloballyUniqueId() {
++    return this.getClass().getName();
++  }
++
++  @Override
++  public String getName() {
++    return name();
++  }
++}
++
++class EmptyConsumerMethodVisitor extends EmptyMethodAdapter {
++
++  private static final List<Type>           CONSUMERS              = Arrays
++      .asList(Type.getType(Consumer.class), Type.getType(DoubleConsumer.class));
++  private static final Logger               LOG                    = Log
++      .getLogger();
++  private final        MutationContext      context;
++  private final        MethodInfo           methodInfo;
++  private final        Set<String>          lambdaSyntheticMethods = new HashSet<>();
++  private final        MethodMutatorFactory factory;
++  private              boolean              visitedFirstLine       = false;
++
++  EmptyConsumerMethodVisitor(final MethodMutatorFactory factory,
++      final MutationContext context, final MethodInfo methodInfo,
++      final MethodVisitor delegateMethodVisitor) {
++    super(ASMVersion.ASM_VERSION, delegateMethodVisitor);
++    this.context = context;
++    this.methodInfo = methodInfo;
++    this.factory = factory;
++    findLambdaSyntheticMethods();
++  }
++
++  private static boolean isLambda(final Handle bsm) {
++    return bsm.getOwner()
++        .equals(Type.getType(LambdaMetafactory.class).getInternalName()) && bsm
++        .getName().equals("metafactory") && bsm.getDesc().equals(
++        "(Ljava/lang/invoke/MethodHandles$Lookup;Ljava/lang/String;"
++            + "Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodType;Ljava/lang/invoke/MethodHandle;"
++            + "Ljava/lang/invoke/MethodType;)Ljava/lang/invoke/CallSite;");
++  }
++
++  private void findLambdaSyntheticMethods() {
++    final ClassReader cr = new ClassReader(this.context.getByteSource());
++    cr.accept(new ClassVisitor(ASM7) {
++      @Override
++      public MethodVisitor visitMethod(final int access, final String name,
++          final String descriptor, final String signature,
++          final String[] exceptions) {
++        return new MethodVisitor(ASM7) {
++          @Override
++          public void visitInvokeDynamicInsn(final String name,
++              final String descriptor, final Handle bootstrapMethodHandle,
++              final Object... bootstrapMethodArguments) {
++            if (isLambda(bootstrapMethodHandle)) {
++              final Handle handle = (Handle) bootstrapMethodArguments[1];
++              final Type returnType = Type.getReturnType(descriptor);
++              if (CONSUMERS.contains(returnType)) {
++                lambdaSyntheticMethods.add(handle.getName());
++              }
++            }
++          }
++        };
++      }
++    }, 0);
++  }
++
++  @Override
++  public void visitLineNumber(final int line, final Label start) {
++    super.visitLineNumber(line, start);
++
++    if (!visitedFirstLine) {
++      if (this.methodInfo.isSynthetic() && this.methodInfo.isVoid()
++          && lambdaSyntheticMethods.contains(this.methodInfo.getName())) {
++        final MutationIdentifier newId = this.context
++            .registerMutation(this.factory, "Removing Consumer");
++
++        if (this.context.shouldMutate(newId)) {
++          isLambda = true;
++        }
++        visitedFirstLine = true;
++      }
++    }
++  }
++
++  @Override
++  public void visitInsn(final int opcode) {
++    if (opcode == RETURN) {
++      mv.visitInsn(opcode);
++    } else {
++      super.visitInsn(opcode);
++    }
++  }
++}
+\ No newline at end of file
+diff --git a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/EmptyMethodAdapter.java b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/EmptyMethodAdapter.java
+new file mode 100644
+index 00000000..4121aa1a
+--- /dev/null
++++ b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/EmptyMethodAdapter.java
+@@ -0,0 +1,259 @@
++package org.pitest.mutationtest.engine.gregor.mutators.experimental;
++
++import org.objectweb.asm.AnnotationVisitor;
++import org.objectweb.asm.Attribute;
++import org.objectweb.asm.Handle;
++import org.objectweb.asm.Label;
++import org.objectweb.asm.MethodVisitor;
++import org.objectweb.asm.TypePath;
++
++public class EmptyMethodAdapter extends MethodVisitor {
++  boolean isLambda;
++
++  EmptyMethodAdapter(final int api, final MethodVisitor methodVisitor) {
++    super(api, methodVisitor);
++  }
++
++  @Override
++  public void visitParameter(final String name, final int access) {
++    if (!isLambda) {
++      super.visitParameter(name, access);
++    }
++  }
++
++  @Override
++  public AnnotationVisitor visitAnnotationDefault() {
++    if (!isLambda) {
++      return super.visitAnnotationDefault();
++    } else {
++      return null;
++    }
++  }
++
++  @Override
++  public AnnotationVisitor visitAnnotation(final String descriptor, final boolean visible) {
++    if (!isLambda) {
++      return super.visitAnnotation(descriptor, visible);
++    } else {
++      return null;
++    }
++  }
++
++  @Override
++  public AnnotationVisitor visitTypeAnnotation(final int typeRef, final TypePath typePath,
++      final String descriptor, final boolean visible) {
++    if (!isLambda) {
++      return super.visitTypeAnnotation(typeRef, typePath, descriptor, visible);
++    } else {
++      return null;
++    }
++  }
++
++  @Override
++  public void visitAnnotableParameterCount(final int parameterCount,
++      final boolean visible) {
++    if (!isLambda) {
++      super.visitAnnotableParameterCount(parameterCount, visible);
++    }
++  }
++
++  @Override
++  public AnnotationVisitor visitParameterAnnotation(final int parameter,
++      final String descriptor, final boolean visible) {
++    if (!isLambda) {
++      return super.visitParameterAnnotation(parameter, descriptor, visible);
++    } else {
++      return null;
++    }
++  }
++
++  @Override
++  public void visitAttribute(final Attribute attribute) {
++    if (!isLambda) {
++      super.visitAttribute(attribute);
++    }
++  }
++
++//  @Override
++//  public void visitFrame(final int type, final int numLocal, final Object[] local, final int numStack,
++//      final Object[] stack) {
++//    if (!isLambda) {
++//      super.visitFrame(type, numLocal, local, numStack, stack);
++//    }
++//  }
++
++  @Override
++  public void visitInsn(final int opcode) {
++    if (!isLambda) {
++      super.visitInsn(opcode);
++    }
++  }
++
++  @Override
++  public void visitIntInsn(final int opcode, final int operand) {
++    if (!isLambda) {
++      super.visitIntInsn(opcode, operand);
++    }
++  }
++
++  @Override
++  public void visitVarInsn(final int opcode, final int var) {
++    if (!isLambda) {
++      super.visitVarInsn(opcode, var);
++    }
++  }
++
++  @Override
++  public void visitTypeInsn(final int opcode, final String type) {
++    if (!isLambda) {
++      super.visitTypeInsn(opcode, type);
++    }
++  }
++
++  @Override
++  public void visitFieldInsn(final int opcode, final String owner, final String name,
++      final String descriptor) {
++    if (!isLambda) {
++      super.visitFieldInsn(opcode, owner, name, descriptor);
++    }
++  }
++
++  @Override
++  public void visitMethodInsn(final int opcode, final String owner, final String name,
++      final String descriptor) {
++    if (!isLambda) {
++      super.visitMethodInsn(opcode, owner, name, descriptor);
++    }
++  }
++
++  @Override
++  public void visitMethodInsn(final int opcode, final String owner, final String name,
++      final String descriptor, final boolean isInterface) {
++    if (!isLambda) {
++      super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
++    }
++  }
++
++  @Override
++  public void visitInvokeDynamicInsn(final String name, final String descriptor,
++      final Handle bootstrapMethodHandle, final Object... bootstrapMethodArguments) {
++    if (!isLambda) {
++      super.visitInvokeDynamicInsn(name, descriptor, bootstrapMethodHandle,
++          bootstrapMethodArguments);
++    }
++  }
++
++  @Override
++  public void visitJumpInsn(final int opcode, final Label label) {
++    if (!isLambda) {
++      super.visitJumpInsn(opcode, label);
++    }
++  }
++
++//  @Override
++//  public void visitLabel(final Label label) {
++//    if (!isLambda) {
++//      super.visitLabel(label);
++//    }
++//  }
++
++  @Override
++  public void visitLdcInsn(final Object value) {
++    if (!isLambda) {
++      super.visitLdcInsn(value);
++    }
++  }
++
++  @Override
++  public void visitIincInsn(final int var, final int increment) {
++    if (!isLambda) {
++      super.visitIincInsn(var, increment);
++    }
++  }
++
++  @Override
++  public void visitTableSwitchInsn(final int min, final int max, final Label dflt,
++      final Label... labels) {
++    if (!isLambda) {
++      super.visitTableSwitchInsn(min, max, dflt, labels);
++    }
++  }
++
++  @Override
++  public void visitLookupSwitchInsn(final Label dflt, final int[] keys, final Label[] labels) {
++    if (!isLambda) {
++      super.visitLookupSwitchInsn(dflt, keys, labels);
++    }
++  }
++
++  @Override
++  public void visitMultiANewArrayInsn(final String descriptor, final int numDimensions) {
++    if (!isLambda) {
++      super.visitMultiANewArrayInsn(descriptor, numDimensions);
++    }
++  }
++
++  @Override
++  public AnnotationVisitor visitInsnAnnotation(final int typeRef, final TypePath typePath,
++      final String descriptor, final boolean visible) {
++    if (!isLambda) {
++      return super.visitInsnAnnotation(typeRef, typePath, descriptor, visible);
++    } else {
++      return null;
++    }
++  }
++
++  @Override
++  public void visitTryCatchBlock(final Label start, final Label end, final Label handler,
++      final String type) {
++    if (!isLambda) {
++      super.visitTryCatchBlock(start, end, handler, type);
++    }
++  }
++
++  @Override
++  public AnnotationVisitor visitTryCatchAnnotation(final int typeRef,
++      final TypePath typePath, final String descriptor, final boolean visible) {
++    if (!isLambda) {
++      return super
++          .visitTryCatchAnnotation(typeRef, typePath, descriptor, visible);
++    } else {
++      return null;
++    }
++  }
++
++//  @Override
++//  public void visitLocalVariable(final String name, final String descriptor,
++//      final String signature, final Label start, final Label end, final int index) {
++//    if (!isLambda) {
++//      super.visitLocalVariable(name, descriptor, signature, start, end, index);
++//    }
++//  }
++
++  @Override
++  public AnnotationVisitor visitLocalVariableAnnotation(final int typeRef,
++      final TypePath typePath, final Label[] start, final Label[] end, final int[] index,
++      final String descriptor, final boolean visible) {
++    if (!isLambda) {
++      return super
++          .visitLocalVariableAnnotation(typeRef, typePath, start, end, index,
++              descriptor, visible);
++    } else {
++      return null;
++    }
++  }
++
++//  @Override
++//  public void visitLineNumber(final int line, final Label start) {
++//    if (!isLambda) {
++//      super.visitLineNumber(line, start);
++//    }
++//  }
++
++//  @Override
++//  public void visitMaxs(final int maxStack, final int maxLocals) {
++//    if (!isLambda) {
++//      super.visitMaxs(maxStack, maxLocals);
++//    }
++//  }
++}
+diff --git a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/IdentityFunctionMutator.java b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/IdentityFunctionMutator.java
+new file mode 100644
+index 00000000..707743b3
+--- /dev/null
++++ b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/IdentityFunctionMutator.java
+@@ -0,0 +1,112 @@
++package org.pitest.mutationtest.engine.gregor.mutators.experimental;
++
++import org.objectweb.asm.Handle;
++import org.objectweb.asm.MethodVisitor;
++import org.objectweb.asm.Type;
++import org.pitest.bytecode.ASMVersion;
++import org.pitest.mutationtest.engine.MutationIdentifier;
++import org.pitest.mutationtest.engine.gregor.MethodInfo;
++import org.pitest.mutationtest.engine.gregor.MethodMutatorFactory;
++import org.pitest.mutationtest.engine.gregor.MutationContext;
++import org.pitest.util.Log;
++
++import java.util.Arrays;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Set;
++import java.util.function.Consumer;
++import java.util.function.DoubleConsumer;
++import java.util.function.Function;
++import java.util.logging.Logger;
++
++import static org.objectweb.asm.Opcodes.INVOKESTATIC;
++import static org.objectweb.asm.Opcodes.POP;
++import static org.objectweb.asm.Opcodes.POP2;
++
++
++//TODO add comment to the dissertation regarding
++//the need to use POP in case the lambda is statefull
++public enum IdentityFunctionMutator implements MethodMutatorFactory {
++  TO_IDENTITY_FUNCTION_MUTATOR;
++
++  @Override
++  public MethodVisitor create(final MutationContext context,
++      final MethodInfo methodInfo, final MethodVisitor methodVisitor) {
++    return new IdentityFunctionVisitor(this, context, methodInfo,
++        methodVisitor);
++  }
++
++  @Override
++  public String getGloballyUniqueId() {
++    return getClass().getName();
++  }
++
++  @Override
++  public String getName() {
++    return name();
++  }
++}
++
++class IdentityFunctionVisitor extends MethodVisitor {
++
++  private static final List<Type>           CONSUMERS              = Arrays
++      .asList(Type.getType(Consumer.class), Type.getType(DoubleConsumer.class));
++  private static final Logger               LOG                    = Log
++      .getLogger();
++  private final        MutationContext      context;
++  private final        MethodInfo           methodInfo;
++  private final        Set<String>          lambdaSyntheticMethods = new HashSet<>();
++  private final        MethodMutatorFactory factory;
++  private              boolean              visitedFirstLine       = false;
++
++  IdentityFunctionVisitor(final MethodMutatorFactory factory,
++      final MutationContext context, final MethodInfo methodInfo,
++      final MethodVisitor delegateMethodVisitor) {
++    super(ASMVersion.ASM_VERSION, delegateMethodVisitor);
++    this.context = context;
++    this.methodInfo = methodInfo;
++    this.factory = factory;
++  }
++
++  @Override
++  public void visitInvokeDynamicInsn(final String name, final String descriptor,
++      final Handle bootstrapMethodHandle,
++      final Object... bootstrapMethodArguments) {
++
++    final Type functionType = Type.getMethodType(Type.getType(Function.class));
++    final Type methodType = Type.getType(descriptor);
++
++    if ("apply".equals(name) && functionType.getReturnType()
++        .equals(methodType.getReturnType())) {
++
++      final MutationIdentifier newId = this.context
++          .registerMutation(this.factory, "Replacing with Function.identity()");
++
++      if (this.context.shouldMutate(newId)) {
++        //pop arguments of the replaced function
++        popValues(descriptor);
++        super.visitMethodInsn(INVOKESTATIC,
++            Type.getType(Function.class).getInternalName(), "identity",
++            functionType.getDescriptor(), true);
++      } else {
++        super.visitInvokeDynamicInsn(name, descriptor, bootstrapMethodHandle,
++            bootstrapMethodArguments);
++      }
++    } else {
++      super.visitInvokeDynamicInsn(name, descriptor, bootstrapMethodHandle,
++          bootstrapMethodArguments);
++    }
++  }
++
++  private void popValues(final String methodDescriptor) {
++    final Type[] argumentTypes = Type.getArgumentTypes(methodDescriptor);
++    for (int i = argumentTypes.length - 1; i >= 0; i--) {
++      final Type argumentType = argumentTypes[i];
++      if (argumentType.getSize() > 1) {
++        super.visitInsn(POP2);
++      } else {
++        super.visitInsn(POP);
++      }
++    }
++  }
++}
+\ No newline at end of file
+diff --git a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/LimitStreamElementsMutator.java b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/LimitStreamElementsMutator.java
+new file mode 100644
+index 00000000..98dbd215
+--- /dev/null
++++ b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/LimitStreamElementsMutator.java
+@@ -0,0 +1,66 @@
++package org.pitest.mutationtest.engine.gregor.mutators.experimental;
++
++import org.objectweb.asm.MethodVisitor;
++import org.pitest.bytecode.ASMVersion;
++import org.pitest.mutationtest.engine.MutationIdentifier;
++import org.pitest.mutationtest.engine.gregor.MethodInfo;
++import org.pitest.mutationtest.engine.gregor.MethodMutatorFactory;
++import org.pitest.mutationtest.engine.gregor.MutationContext;
++
++import static org.objectweb.asm.Opcodes.INVOKEINTERFACE;
++import static org.objectweb.asm.Opcodes.LCONST_0;
++
++public enum LimitStreamElementsMutator implements MethodMutatorFactory {
++
++  LIMIT_STREAM_ELEMENTS_MUTATOR;
++
++  @Override
++  public MethodVisitor create(final MutationContext context,
++      final MethodInfo methodInfo, final MethodVisitor methodVisitor) {
++    return new LimitStreamElementsMethodVisitor(this, context, methodVisitor);
++  }
++
++  @Override
++  public String getGloballyUniqueId() {
++    return this.getClass().getName();
++  }
++
++  @Override
++  public String getName() {
++    return name();
++  }
++}
++
++class LimitStreamElementsMethodVisitor extends MethodVisitor {
++
++  private final MethodMutatorFactory factory;
++  private final MutationContext      context;
++
++  LimitStreamElementsMethodVisitor(final MethodMutatorFactory factory,
++      final MutationContext context,
++      final MethodVisitor delegateMethodVisitor) {
++    super(ASMVersion.ASM_VERSION, delegateMethodVisitor);
++    this.factory = factory;
++    this.context = context;
++  }
++
++  @Override
++  public void visitMethodInsn(final int opcode, final String owner,
++      final String name, final String descriptor, final boolean isInterface) {
++
++    super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
++
++    if (opcode == INVOKEINTERFACE && "stream".equals(name)
++        && "()Ljava/util/stream/Stream;".equals(descriptor)) {
++      final MutationIdentifier newId = this.context
++          .registerMutation(this.factory,
++              "Limiting stream elements " + owner + "::" + name);
++      if (this.context.shouldMutate(newId)) {
++        mv.visitInsn(LCONST_0);
++        mv.visitMethodInsn(INVOKEINTERFACE, "java/util/stream/Stream", "limit",
++            "(J)Ljava/util/stream/Stream;", true);
++      }
++    }
++  }
++
++}
+\ No newline at end of file
+diff --git a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/NegatePredicateMutator.java b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/NegatePredicateMutator.java
+new file mode 100644
+index 00000000..a591a127
+--- /dev/null
++++ b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/NegatePredicateMutator.java
+@@ -0,0 +1,61 @@
++package org.pitest.mutationtest.engine.gregor.mutators.experimental;
++
++import org.objectweb.asm.MethodVisitor;
++import org.pitest.bytecode.ASMVersion;
++import org.pitest.mutationtest.engine.MutationIdentifier;
++import org.pitest.mutationtest.engine.gregor.MethodInfo;
++import org.pitest.mutationtest.engine.gregor.MethodMutatorFactory;
++import org.pitest.mutationtest.engine.gregor.MutationContext;
++
++import static org.objectweb.asm.Opcodes.INVOKEINTERFACE;
++
++public enum NegatePredicateMutator implements MethodMutatorFactory {
++  NEGATE_PREDICATE_MUTATOR;
++
++  @Override
++  public MethodVisitor create(final MutationContext context,
++      final MethodInfo methodInfo, final MethodVisitor methodVisitor) {
++    return new NegatePredicateMutatorVisitor(this, context, methodVisitor);
++  }
++
++  @Override
++  public String getGloballyUniqueId() {
++    return this.getClass().getName();
++  }
++
++  @Override
++  public String getName() {
++    return name();
++  }
++}
++
++class NegatePredicateMutatorVisitor extends MethodVisitor {
++
++  private final MethodMutatorFactory factory;
++  private final MutationContext      context;
++
++  NegatePredicateMutatorVisitor(final MethodMutatorFactory factory,
++      final MutationContext context,
++      final MethodVisitor delegateMethodVisitor) {
++    super(ASMVersion.ASM_VERSION, delegateMethodVisitor);
++    this.factory = factory;
++    this.context = context;
++  }
++
++  @Override
++  public void visitMethodInsn(final int opcode, final String owner,
++      final String name, final String descriptor, final boolean isInterface) {
++    if (opcode == INVOKEINTERFACE && descriptor
++        .startsWith("(Ljava/util/function/Predicate;)")) {
++      final MutationIdentifier newId = this.context
++          .registerMutation(this.factory,
++              "Negating predicate " + owner + "::" + name);
++      if (this.context.shouldMutate(newId)) {
++        mv.visitMethodInsn(INVOKEINTERFACE, "java/util/function/Predicate",
++            "negate", "()Ljava/util/function/Predicate;", true);
++      }
++    }
++    super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
++  }
++
++}
+diff --git a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/PredicateMatchingMutator.java b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/PredicateMatchingMutator.java
+new file mode 100644
+index 00000000..6a6d5624
+--- /dev/null
++++ b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/PredicateMatchingMutator.java
+@@ -0,0 +1,108 @@
++package org.pitest.mutationtest.engine.gregor.mutators.experimental;
++
++import org.objectweb.asm.MethodVisitor;
++import org.pitest.bytecode.ASMVersion;
++import org.pitest.mutationtest.engine.MutationIdentifier;
++import org.pitest.mutationtest.engine.gregor.MethodInfo;
++import org.pitest.mutationtest.engine.gregor.MethodMutatorFactory;
++import org.pitest.mutationtest.engine.gregor.MutationContext;
++
++import java.util.Arrays;
++import java.util.List;
++
++import static org.objectweb.asm.Opcodes.INVOKEINTERFACE;
++
++public enum PredicateMatchingMutator implements MethodMutatorFactory {
++  STREAM_PREDICATE_MATCHING_MUTATOR;
++
++  @Override
++  public MethodVisitor create(final MutationContext context,
++      final MethodInfo methodInfo, final MethodVisitor methodVisitor) {
++    return new PredicateMatchingMutatorVisitor(this, context, methodVisitor);
++  }
++
++  @Override
++  public String getGloballyUniqueId() {
++    return this.getClass().getName();
++  }
++
++  @Override
++  public String getName() {
++    return name();
++  }
++}
++
++class PredicateMatchingMutatorVisitor extends MethodVisitor {
++
++  private static final List<String>         METHODS = Arrays
++      .asList("anyMatch", "noneMatch", "allMatch");
++  private final        MethodMutatorFactory factory;
++  private final        MutationContext      context;
++
++  PredicateMatchingMutatorVisitor(final MethodMutatorFactory factory,
++      final MutationContext context,
++      final MethodVisitor delegateMethodVisitor) {
++    super(ASMVersion.ASM_VERSION, delegateMethodVisitor);
++    this.factory = factory;
++    this.context = context;
++  }
++
++  @Override
++  public void visitMethodInsn(final int opcode, final String owner,
++      final String name, final String descriptor, final boolean isInterface) {
++    if (opcode == INVOKEINTERFACE && "(Ljava/util/function/Predicate;)Z"
++        .equals(descriptor)) {
++      if ("anyMatch".equals(name)) {
++        mutateAnyMatch(opcode, owner, name, descriptor, isInterface);
++      } else if ("noneMatch".equals(name)) {
++        mutateNoneMatch(opcode, owner, name, descriptor, isInterface);
++      } else if ("allMatch".equals(name)) {
++        mutateAllMatch(opcode, owner, name, descriptor, isInterface);
++      } else {
++        super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
++      }
++    } else {
++      super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
++    }
++  }
++
++  private void mutateAnyMatch(final int opcode, final String owner,
++      final String name, final String descriptor, final boolean isInterface) {
++
++    final MutationIdentifier newId = this.context.registerMutation(this.factory,
++        "Negating anyMatch " + owner + "::" + name);
++    if (this.context.shouldMutate(newId)) {
++      mv.visitMethodInsn(INVOKEINTERFACE, owner, "allMatch", descriptor,
++          isInterface);
++    } else {
++      super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
++    }
++  }
++
++  private void mutateNoneMatch(final int opcode, final String owner,
++      final String name, final String descriptor, final boolean isInterface) {
++
++    final MutationIdentifier newId = this.context.registerMutation(this.factory,
++        "Negating noneMatch " + owner + "::" + name);
++    if (this.context.shouldMutate(newId)) {
++      mv.visitMethodInsn(INVOKEINTERFACE, owner, "anyMatch", descriptor,
++          isInterface);
++    } else {
++      super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
++    }
++  }
++
++  private void mutateAllMatch(final int opcode, final String owner,
++      final String name, final String descriptor, final boolean isInterface) {
++
++    final MutationIdentifier newId = this.context.registerMutation(this.factory,
++        "Negating allMatch " + owner + "::" + name);
++    if (this.context.shouldMutate(newId)) {
++      mv.visitMethodInsn(INVOKEINTERFACE, owner, "anyMatch", descriptor,
++          isInterface);
++    } else {
++      super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
++    }
++  }
++}
++
+diff --git a/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/SkipOneElementMutator.java b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/SkipOneElementMutator.java
+new file mode 100644
+index 00000000..36ed4df6
+--- /dev/null
++++ b/pitest/src/main/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/SkipOneElementMutator.java
+@@ -0,0 +1,68 @@
++package org.pitest.mutationtest.engine.gregor.mutators.experimental;
++
++import org.objectweb.asm.Label;
++import org.objectweb.asm.MethodVisitor;
++import org.pitest.bytecode.ASMVersion;
++import org.pitest.mutationtest.engine.MutationIdentifier;
++import org.pitest.mutationtest.engine.gregor.MethodInfo;
++import org.pitest.mutationtest.engine.gregor.MethodMutatorFactory;
++import org.pitest.mutationtest.engine.gregor.MutationContext;
++
++import static org.objectweb.asm.Opcodes.INVOKEINTERFACE;
++import static org.objectweb.asm.Opcodes.LCONST_1;
++
++
++public enum SkipOneElementMutator implements MethodMutatorFactory {
++
++    SKIP_ONE_ELEMENT_MUTATOR;
++
++    @Override
++    public MethodVisitor create(final MutationContext context,
++                                final MethodInfo methodInfo, final MethodVisitor methodVisitor) {
++        return new SkipOneElementMethodVisitor(this, context, methodVisitor);
++    }
++
++    @Override
++    public String getGloballyUniqueId() {
++        return this.getClass().getName();
++    }
++
++    @Override
++    public String getName() {
++        return name();
++    }
++}
++
++class SkipOneElementMethodVisitor extends MethodVisitor {
++
++    private final MethodMutatorFactory factory;
++    private final MutationContext context;
++
++    SkipOneElementMethodVisitor(final MethodMutatorFactory factory,
++                                final MutationContext context, final MethodVisitor delegateMethodVisitor) {
++        super(ASMVersion.ASM_VERSION, delegateMethodVisitor);
++        this.factory = factory;
++        this.context = context;
++    }
++
++    @Override
++    public void visitLineNumber(int line, Label start) {
++        super.visitLineNumber(line, start);
++    }
++
++    @Override
++    public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
++
++        super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
++        if (opcode == INVOKEINTERFACE && "stream".equals(name) && "()Ljava/util/stream/Stream;".equals(descriptor)) {
++            final MutationIdentifier newId = this.context.registerMutation(
++                    this.factory, "Skipping first element " + owner + "::" + name);
++            //https://github.com/hcoles/pitest/pull/218#issuecomment-131733345
++            //The bytecode should only be mutated when the mutator is passed an id that matches the current mutation point.
++            if (this.context.shouldMutate(newId)) {
++                mv.visitInsn(LCONST_1);
++                mv.visitMethodInsn(INVOKEINTERFACE, "java/util/stream/Stream", "skip", "(J)Ljava/util/stream/Stream;", true);
++            }
++        }
++    }
++}
+\ No newline at end of file
+diff --git a/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/EmptyConsumerForOptionalsTest.java b/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/EmptyConsumerForOptionalsTest.java
+new file mode 100644
+index 00000000..a9ec7050
+--- /dev/null
++++ b/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/EmptyConsumerForOptionalsTest.java
+@@ -0,0 +1,39 @@
++package org.pitest.mutationtest.engine.gregor.mutators.experimental;
++
++import org.junit.Before;
++import org.junit.Test;
++import org.pitest.mutationtest.engine.Mutant;
++import org.pitest.mutationtest.engine.MutationDetails;
++import org.pitest.mutationtest.engine.gregor.MutatorTestBase;
++
++import java.util.Collection;
++import java.util.concurrent.Callable;
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.stream.DoubleStream;
++
++public class EmptyConsumerForOptionalsTest extends MutatorTestBase {
++    @Before
++    public void setupEngineToMutateStreams() {
++        createTesteeWith(EmptyConsumerForOptionals.EMPTY_CONSUMER_FOR_OPTIONALS_MUTATOR);
++    }
++
++    @Test
++    public void testStreamSize() throws Exception {
++        final Collection<MutationDetails> actual = findMutationsFor(OptionalMethodCall.class);
++        final Mutant mutant = getFirstMutant(actual);
++        assertMutantCallableReturns(new OptionalMethodCall(), mutant, 0);
++    }
++}
++
++class OptionalMethodCall implements Callable<Integer> {
++
++
++    @Override
++    public Integer call() throws Exception {
++        final AtomicInteger ai = new AtomicInteger(0);
++        int i = 10;
++        DoubleStream.of(1.1, 1.2, 2.9, 3.1).filter(x -> x > 1.2).findFirst().ifPresent(x -> ai.set((int)x + i));
++        return ai.get();
++    }
++
++}
+\ No newline at end of file
+diff --git a/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/IdentityFunctionMutatorTest.java b/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/IdentityFunctionMutatorTest.java
+new file mode 100644
+index 00000000..6534d894
+--- /dev/null
++++ b/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/IdentityFunctionMutatorTest.java
+@@ -0,0 +1,162 @@
++package org.pitest.mutationtest.engine.gregor.mutators.experimental;
++
++import org.junit.Before;
++import org.junit.Test;
++import org.pitest.mutationtest.engine.Mutant;
++import org.pitest.mutationtest.engine.MutationDetails;
++import org.pitest.mutationtest.engine.gregor.MutatorTestBase;
++
++import java.util.Collection;
++import java.util.concurrent.Callable;
++import java.util.function.UnaryOperator;
++import java.util.stream.Collectors;
++import java.util.stream.Stream;
++
++public class IdentityFunctionMutatorTest extends MutatorTestBase {
++
++  @Before
++  public void setupEngineToMutateStreams() {
++    createTesteeWith(IdentityFunctionMutator.TO_IDENTITY_FUNCTION_MUTATOR);
++  }
++
++  @Test
++  public void testStreamMap() throws Exception {
++    final Collection<MutationDetails> actual = findMutationsFor(
++        StreamMapMethodCall.class);
++    final Mutant mutant = getFirstMutant(actual);
++    assertMutantCallableReturns(new StreamMapMethodCall(), mutant,
++        "Thisisatest");
++  }
++
++  @Test
++  public void testStreamMapStatefulLambda1() throws Exception {
++    final Collection<MutationDetails> actual = findMutationsFor(
++        StreamMapMethodCall1.class);
++    final Mutant mutant = getFirstMutant(actual);
++    assertMutantCallableReturns(new StreamMapMethodCall1(), mutant,
++        "Thisisatest");
++  }
++
++  @Test
++  public void testStreamMapStatefulLambda2() throws Exception {
++    final Collection<MutationDetails> actual = findMutationsFor(
++        StreamMapMethodCall2.class);
++    final Mutant mutant = getFirstMutant(actual);
++    assertMutantCallableReturns(new StreamMapMethodCall2(), mutant,
++        "Thisisatest");
++  }
++
++  @Test
++  public void testStreamMapStatefulLambda3() throws Exception {
++    final Collection<MutationDetails> actual = findMutationsFor(
++        StreamMapMethodCall3.class);
++    final Mutant mutant = getFirstMutant(actual);
++    assertMutantCallableReturns(new StreamMapMethodCall3(), mutant,
++        "Thisisatest");
++  }
++
++  @Test
++  public void testStreamMapStatefulLambda4() throws Exception {
++    final Collection<MutationDetails> actual = findMutationsFor(
++        StreamMapMethodCall4.class);
++    final Mutant mutant = getFirstMutant(actual);
++    assertMutantCallableReturns(new StreamMapMethodCall4(), mutant,
++        "Thisisatest");
++  }
++
++  @Test
++  public void testStreamMapUnaryOperator() throws Exception {
++    final Collection<MutationDetails> actual = findMutationsFor(
++        StreamMapMethodCall5.class);
++    final Mutant mutant = getFirstMutant(actual);
++    assertMutantCallableReturns(new StreamMapMethodCall5(), mutant,
++        "Thisisatest");
++  }
++}
++
++class StreamMapMethodCall implements Callable<String> {
++
++  @Override
++  public String call() throws Exception {
++    final String collect = Stream.of("This", "is", "a", "test")
++        .map(s -> s + ",").collect(Collectors.joining());
++    return collect;
++  }
++
++}
++
++class StreamMapMethodCall1 implements Callable<String> {
++
++  @Override
++  public String call() throws Exception {
++    final String collect = Stream.of("This", "is", "a", "test")
++        .map(s -> changeIt(s)).collect(Collectors.joining());
++    return collect;
++  }
++
++  private String changeIt(final String s) {
++    return s + ",";
++  }
++}
++
++class StreamMapMethodCall2 implements Callable<String> {
++  private Integer i = 10;
++
++  @Override
++  public String call() throws Exception {
++    final String collect = Stream.of("This", "is", "a", "test")
++        .map(s -> s + "," + i).collect(Collectors.joining());
++    return collect;
++  }
++}
++
++class StreamMapMethodCall3 implements Callable<String> {
++  private Integer i = 10;
++
++  private static String stest() {
++    return "test";
++  }
++
++  @Override
++  public String call() throws Exception {
++    final String collect = Stream.of("This", "is", "a", "test")
++        .map(s -> s + "," + i + stest()).collect(Collectors.joining());
++    return collect;
++  }
++}
++
++class StreamMapMethodCall4 implements Callable<String> {
++  private Integer i = 10;
++
++  private static String stest() {
++    return "test";
++  }
++
++  @Override
++  public String call() throws Exception {
++    final Long l = 2L;
++    final String collect = Stream.of("This", "is", "a", "test")
++        .map(s -> s + "," + i + stest() + l.toString())
++        .collect(Collectors.joining());
++    return collect;
++  }
++}
++
++class StreamMapMethodCall5 implements Callable<String> {
++  private Integer i = 10;
++
++  private static String stest() {
++    return "test";
++  }
++
++  private UnaryOperator<String> f = s -> s + ",";
++
++  @Override
++  public String call() throws Exception {
++    final Long l = 2L;
++    final String collect = Stream.of("This", "is", "a", "test")
++        .map(f)
++        .collect(Collectors.joining());
++    return collect;
++  }
++}
+\ No newline at end of file
+diff --git a/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/LimitStreamElementsMutatorTest.java b/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/LimitStreamElementsMutatorTest.java
+new file mode 100644
+index 00000000..92b95f9c
+--- /dev/null
++++ b/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/LimitStreamElementsMutatorTest.java
+@@ -0,0 +1,39 @@
++package org.pitest.mutationtest.engine.gregor.mutators.experimental;
++
++import org.junit.Before;
++import org.junit.Test;
++import org.pitest.mutationtest.engine.Mutant;
++import org.pitest.mutationtest.engine.MutationDetails;
++import org.pitest.mutationtest.engine.gregor.MutatorTestBase;
++
++import java.util.Collection;
++import java.util.concurrent.Callable;
++import java.util.stream.Collectors;
++import java.util.stream.Stream;
++
++public class LimitStreamElementsMutatorTest extends MutatorTestBase {
++    @Before
++    public void setupEngineToMutateStreams() {
++        createTesteeWith(mutateOnlyCallMethod(), LimitStreamElementsMutator.LIMIT_STREAM_ELEMENTS_MUTATOR);
++    }
++
++    @Test
++    public void testStreamSize() throws Exception {
++        final Collection<MutationDetails> actual = findMutationsFor(LimitStreamElementsMutatorTest.HasStreamMethodCall.class);
++        final Mutant mutant = getFirstMutant(actual);
++        assertMutantCallableReturns(new LimitStreamElementsMutatorTest.HasStreamMethodCall(), mutant, "0");
++    }
++
++    private static class HasStreamMethodCall implements Callable<String> {
++
++
++        @Override
++        public String call() throws Exception {
++            long count = Stream.of(1, 2, 3).collect(Collectors.toList())
++                    .stream().filter(i -> i >= 0).count();
++
++            return "" + count;
++        }
++    }
++
++}
+\ No newline at end of file
+diff --git a/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/NegatePredicateMutatorTest.java b/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/NegatePredicateMutatorTest.java
+new file mode 100644
+index 00000000..500863cc
+--- /dev/null
++++ b/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/NegatePredicateMutatorTest.java
+@@ -0,0 +1,40 @@
++package org.pitest.mutationtest.engine.gregor.mutators.experimental;
++
++import org.junit.Before;
++import org.junit.Test;
++import org.pitest.mutationtest.engine.Mutant;
++import org.pitest.mutationtest.engine.MutationDetails;
++import org.pitest.mutationtest.engine.gregor.MutatorTestBase;
++
++import java.util.Collection;
++import java.util.List;
++import java.util.concurrent.Callable;
++import java.util.stream.Collectors;
++import java.util.stream.Stream;
++
++public class NegatePredicateMutatorTest extends MutatorTestBase {
++  @Before
++  public void setupEngineToMutateStreams() {
++    createTesteeWith(mutateOnlyCallMethod(),
++        NegatePredicateMutator.NEGATE_PREDICATE_MUTATOR);
++  }
++
++  @Test
++  public void negatePredicate() throws Exception {
++    final Collection<MutationDetails> actual = findMutationsFor(
++        NoneMatch.class);
++    final Mutant mutant = getFirstMutant(actual);
++    assertMutantCallableReturns(new NoneMatch(),
++        mutant, Boolean.FALSE);
++  }
++
++  private class NoneMatch implements Callable<Boolean> {
++
++    @Override
++    public Boolean call() throws Exception {
++      final List<String> list = Stream.of("a", "b").
++          filter(s -> s.length() > 2).collect(Collectors.toList());
++      return list.isEmpty();
++    }
++  }
++}
+\ No newline at end of file
+diff --git a/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/PredicateMatchingMutatorTest.java b/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/PredicateMatchingMutatorTest.java
+new file mode 100644
+index 00000000..ac32743b
+--- /dev/null
++++ b/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/PredicateMatchingMutatorTest.java
+@@ -0,0 +1,90 @@
++package org.pitest.mutationtest.engine.gregor.mutators.experimental;
++
++import org.junit.Before;
++import org.junit.Test;
++import org.pitest.mutationtest.engine.Mutant;
++import org.pitest.mutationtest.engine.MutationDetails;
++import org.pitest.mutationtest.engine.gregor.MutatorTestBase;
++
++import java.util.Collection;
++import java.util.concurrent.Callable;
++import java.util.function.Predicate;
++import java.util.stream.Stream;
++
++public class PredicateMatchingMutatorTest extends MutatorTestBase {
++  @Before
++  public void setupEngineToMutateStreams() {
++    createTesteeWith(mutateOnlyCallMethod(),
++        PredicateMatchingMutator.STREAM_PREDICATE_MATCHING_MUTATOR);
++  }
++
++  @Test
++  public void negateAnyMatch() throws Exception {
++    final Collection<MutationDetails> actual = findMutationsFor(AnyMatch.class);
++    final Mutant mutant = getFirstMutant(actual);
++    assertMutantCallableReturns(new AnyMatch(), mutant, Boolean.FALSE);
++  }
++
++  @Test
++  public void negateAnyMatch_predicateAsVariable() throws Exception {
++    final Collection<MutationDetails> actual = findMutationsFor(AnyMatch2.class);
++    final Mutant mutant = getFirstMutant(actual);
++    assertMutantCallableReturns(new AnyMatch2(), mutant, Boolean.FALSE);
++  }
++
++  @Test
++  public void negateNoneMatch() throws Exception {
++    final Collection<MutationDetails> actual = findMutationsFor(NoneMatch.class);
++    final Mutant mutant = getFirstMutant(actual);
++    assertMutantCallableReturns(new NoneMatch(), mutant, Boolean.TRUE);
++  }
++
++  @Test
++  public void negateAllMatch() throws Exception {
++    final Collection<MutationDetails> actual = findMutationsFor(AllMatch.class);
++    final Mutant mutant = getFirstMutant(actual);
++    assertMutantCallableReturns(new AllMatch(), mutant, Boolean.TRUE);
++  }
++
++  private class AnyMatch implements Callable<Boolean> {
++
++    @Override
++    public Boolean call() throws Exception {
++      final boolean anyMatch = Stream.of("this", "is", "a", "test").
++          anyMatch(s -> s.length() < 2);
++      return anyMatch;
++    }
++  }
++
++  private class AnyMatch2 implements Callable<Boolean> {
++
++    @Override
++    public Boolean call() throws Exception {
++      final Predicate<String> stringPredicate = s -> s.length() < 2;
++      final boolean anyMatch = Stream.of("this", "is", "a", "test").
++          anyMatch(stringPredicate);
++      return anyMatch;
++    }
++  }
++
++  private class NoneMatch implements Callable<Boolean> {
++
++    @Override
++    public Boolean call() throws Exception {
++      final boolean noneMatch = Stream.of("a", "test").
++          noneMatch(s -> s.length() > 2);
++      return noneMatch;
++    }
++  }
++
++  private class AllMatch implements Callable<Boolean> {
++
++    @Override
++    public Boolean call() throws Exception {
++      final boolean allMatch = Stream.of("this", "test").
++          allMatch(s -> s.length() > 2);
++      return allMatch;
++    }
++  }
++
++}
+\ No newline at end of file
+diff --git a/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/SkipOneElementMutatorTest.java b/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/SkipOneElementMutatorTest.java
+new file mode 100644
+index 00000000..901c4831
+--- /dev/null
++++ b/pitest/src/test/java/org/pitest/mutationtest/engine/gregor/mutators/experimental/SkipOneElementMutatorTest.java
+@@ -0,0 +1,41 @@
++package org.pitest.mutationtest.engine.gregor.mutators.experimental;
++
++import org.junit.Before;
++import org.junit.Test;
++import org.pitest.mutationtest.engine.Mutant;
++import org.pitest.mutationtest.engine.MutationDetails;
++import org.pitest.mutationtest.engine.gregor.MutatorTestBase;
++
++import java.util.Collection;
++import java.util.List;
++import java.util.concurrent.Callable;
++import java.util.stream.Collectors;
++import java.util.stream.Stream;
++
++public class SkipOneElementMutatorTest extends MutatorTestBase {
++    @Before
++    public void setupEngineToMutateStreams() {
++        createTesteeWith(SkipOneElementMutator.SKIP_ONE_ELEMENT_MUTATOR);
++    }
++
++    @Test
++    public void testStreamSize() throws Exception {
++        final Collection<MutationDetails> actual = findMutationsFor(HasStreamMethodCall.class);
++        final Mutant mutant = getFirstMutant(actual);
++        assertMutantCallableReturns(new HasStreamMethodCall(), mutant, "[2, 3]");
++    }
++
++    private static class HasStreamMethodCall implements Callable<String> {
++
++
++        @Override
++        public String call() throws Exception {
++            List<Integer> integers = Stream.of(1, 2, 3).collect(Collectors.toList())
++                    .stream().filter(i -> i >= 0).collect(Collectors.toList());
++
++            return integers.toString();
++        }
++    }
++
++
++}
+\ No newline at end of file
+-- 
+2.20.1
+
